@@ -56,7 +56,6 @@ public class Main {
             .defaultsTo(Paths.get("output.mid"));
 
     public static void main(String[] args) throws Exception {
-        args = new String[] { "-i", "Rick Astley - Never Gonna Give You Up-dQw4w9WgXcQ.mp3" };
         OptionSet opts;
         try {
             opts = PARSER.parse(args);
