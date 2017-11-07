@@ -145,6 +145,10 @@ public class Processor {
             }
 
             in.flip();
+            
+            if (icnt % 100 == 0) {
+                System.err.print(".");
+            }
 
             // move into fft input
             x.clear();

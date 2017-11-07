@@ -36,12 +36,13 @@ import joptsimple.ArgumentAcceptingOptionSpec;
 import joptsimple.OptionException;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
+import joptsimple.OptionSpec;
 import joptsimple.util.PathConverter;
 import joptsimple.util.PathProperties;
 
 public class Main {
 
-    private static final Path STDIN = Paths.get("/STDIN_INVALID_PATH_THAT_NO_ONE_SHOULD_USE/");
+    private static final Path STDIN = Paths.get("-");
 
     private static final OptionParser PARSER = new OptionParser();
 
@@ -55,6 +56,9 @@ public class Main {
             .withValuesConvertedBy(new PathConverter())
             .defaultsTo(Paths.get("output.mid"));
 
+    private static final OptionSpec<Void> HELP = PARSER.acceptsAll(Arrays.asList("h", "help"), "Print this help.")
+            .forHelp();
+
     public static void main(String[] args) throws Exception {
         OptionSet opts;
         try {
@@ -64,6 +68,11 @@ public class Main {
         } catch (OptionException e) {
             System.err.println(e.getLocalizedMessage());
             System.exit(1);
+            return;
+        }
+        
+        if (opts.has(HELP)) {
+            PARSER.printHelpOn(System.err);
             return;
         }
 

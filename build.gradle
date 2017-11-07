@@ -127,6 +127,6 @@ configure([compileJava, compileTestJava]) {
 apply plugin: 'com.github.johnrengelman.shadow'
 jar {
     manifest {
-        attributes 'Main-Class': 'me.kenzierocks.a2m.Main'
+        attributes 'Main-Class': 'me.kenzierocks.a2m.v2.Main'
     }
 }
