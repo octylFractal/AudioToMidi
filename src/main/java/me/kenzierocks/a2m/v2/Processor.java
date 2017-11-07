@@ -40,16 +40,20 @@ import javax.sound.sampled.AudioSystem;
 import org.bytedeco.javacpp.fftw3;
 import org.bytedeco.javacpp.fftw3.fftw_plan;
 
+import com.google.common.base.Strings;
+
 import me.kenzierocks.a2m.MidiFreqRelations;
 
 public class Processor {
 
     private final InputStream stream;
     private final OutputStream out;
+    private final long estSize;
 
-    public Processor(InputStream stream, OutputStream out) {
+    public Processor(InputStream stream, OutputStream out, long estSize) {
         this.stream = stream;
         this.out = out;
+        this.estSize = estSize;
     }
 
     public void process() throws Exception {
@@ -126,6 +130,18 @@ public class Processor {
 
         fftw_plan plan = fftw3.fftw_plan_r2r_1d(len, x, y, fftw3.FFTW_R2HC, (int) fftw3.FFTW_ESTIMATE);
 
+        // Samples per second (s/e)
+        double sampRate = sfinfo.getSampleRate();
+        // hops per dot (h/d)
+        double dotHopRate = 100;
+        // Samples per hop (s/h)
+        double sampHopRate = hop;
+        // s/d = (s/h)*(h/d)
+        // d/e = (s/e)/(s/d) = (s/e)*(d/s)
+        // d/e = (s/e)/((s/h)*(h/d))
+        double dotRateSec = sampRate / (sampHopRate * dotHopRate);
+        System.err.printf("%,f sec/dot%n", 1 / dotRateSec);
+
         if (hop != len) {
             sndfile_read(sf, sfinfo, position(in, hop), len - hop);
         }
@@ -145,7 +161,7 @@ public class Processor {
             }
 
             in.flip();
-            
+
             if (icnt % 100 == 0) {
                 System.err.print(".");
             }

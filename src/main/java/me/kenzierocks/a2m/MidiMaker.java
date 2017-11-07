@@ -330,8 +330,8 @@ public class MidiMaker {
                      * scale intensity (velocity) of the peak power range from
                      * 10^cut_ratio to 10^0 is scaled
                      */
-                    x = 127.0 / (double) (-cut_ratio)
-                            * (Math.log10(p[imax]) - (double) cut_ratio);
+                    x = 127.0 / (-cut_ratio)
+                            * (Math.log10(p[imax]) - cut_ratio);
                     if (x >= 128.0) {
                         intens[in] = 127;
                     } else if (x > 0) {

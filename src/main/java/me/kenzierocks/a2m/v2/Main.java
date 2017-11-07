@@ -76,10 +76,18 @@ public class Main {
             return;
         }
 
-        try (InputStream stream = getStream(opts.valueOf(INPUT));
+        Path input = opts.valueOf(INPUT);
+        try (InputStream stream = getStream(input);
                 OutputStream out = Files.newOutputStream(opts.valueOf(OUTPUT))) {
-            new Processor(stream, out).process();
+            new Processor(stream, out, getSize(input)).process();
         }
+    }
+
+    private static long getSize(Path path) throws IOException {
+        if (path == STDIN) {
+            return 0;
+        }
+        return Files.size(path);
     }
 
     private static InputStream getStream(Path path) throws IOException {

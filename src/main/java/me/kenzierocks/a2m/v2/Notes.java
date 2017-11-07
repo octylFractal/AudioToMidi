@@ -51,11 +51,11 @@ public class Notes {
     }
 
     private final List<Note> notes = new ArrayList<>();
-    
+
     public int count() {
         return notes.size();
     }
-    
+
     public Note getNote(int index) {
         return notes.get(index);
     }
@@ -339,7 +339,7 @@ public class Notes {
                         append(step,
                                 true, /* on */
                                 (byte) i, // midi note
-                                (byte) vel[i]);
+                                vel[i]);
                         on_event[i] = notes.size() - 1; // event index of notes.
                     } else if (vel[i] > n.vel) {
                         /* overwrite velocity */
