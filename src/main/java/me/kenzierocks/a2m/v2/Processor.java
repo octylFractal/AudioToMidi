@@ -163,27 +163,23 @@ public class Processor {
 
             seconds += secondsPerHop;
 
-            if ((seconds - prevSeconds) >= 1) {
-                prevSeconds = seconds;
-                if (dots % 15 == 0) {
-                    int min = (int) (seconds / 60);
-                    int sec = (int) (seconds - min * 60);
+            while ((seconds - prevSeconds) >= 1) {
+                prevSeconds += 1;
+                if (dots % 10 == 0) {
+                    int min = (int) (prevSeconds / 60);
+                    int sec = (int) (prevSeconds - min * 60);
                     System.err.printf("%n%02d:%02d ", min, sec);
                 }
-                System.err.print(".");
+                System.err.print((dots % 10));
                 dots++;
             }
 
-            // move into fft input
-            x.clear();
-            x.put(in);
-            x.flip();
-
             // windowify
-            flag_window.windowing(len, position(x, 0), 1.0, x);
+            x.clear();
+            flag_window.windowing(len, position(in, 0), 1.0, x);
             x.flip();
-
-            fftw3.fftw_execute(plan);
+            
+            fftw_execute(plan);
 
             HC.to_polar2(len, y, 0, den, p, ph1);
 
@@ -247,6 +243,11 @@ public class Processor {
         Midi.output_midi(notes, div, out);
 
         fftw3.fftw_destroy_plan(plan);
+    }
+
+    // split out for profiling purposes
+    private void fftw_execute(fftw_plan plan) {
+        fftw3.fftw_execute(plan);
     }
 
     private DoubleBuffer position(DoubleBuffer buf, int pos) {
