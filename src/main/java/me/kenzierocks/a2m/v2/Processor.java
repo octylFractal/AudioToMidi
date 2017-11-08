@@ -131,16 +131,12 @@ public class Processor {
         fftw_plan plan = fftw3.fftw_plan_r2r_1d(len, x, y, fftw3.FFTW_R2HC, (int) fftw3.FFTW_ESTIMATE);
 
         // Samples per second (s/e)
-        double sampRate = sfinfo.getSampleRate();
-        // hops per dot (h/d)
-        double dotHopRate = 100;
+        double sampsPerSecond = sfinfo.getSampleRate();
         // Samples per hop (s/h)
-        double sampHopRate = hop;
-        // s/d = (s/h)*(h/d)
-        // d/e = (s/e)/(s/d) = (s/e)*(d/s)
-        // d/e = (s/e)/((s/h)*(h/d))
-        double dotRateSec = sampRate / (sampHopRate * dotHopRate);
-        System.err.printf("%,f sec/dot%n", 1 / dotRateSec);
+        double sampsPerHop = hop;
+        // e/h = (s/h)/(s/e)
+        double secondsPerHop = sampsPerHop / sampsPerSecond;
+        System.err.printf("%,f sec/loop%n", secondsPerHop);
 
         if (hop != len) {
             sndfile_read(sf, sfinfo, position(in, hop), len - hop);
@@ -148,6 +144,9 @@ public class Processor {
 
         Extern.pitch_shift = 0.0;
         Extern.n_pitch = 0;
+        int dots = 0;
+        double seconds = 0;
+        double prevSeconds = -1;
         for (int icnt = 0;; icnt++) {
             // prepare
             in.position(0);
@@ -162,8 +161,17 @@ public class Processor {
 
             in.flip();
 
-            if (icnt % 100 == 0) {
+            seconds += secondsPerHop;
+
+            if ((seconds - prevSeconds) >= 1) {
+                prevSeconds = seconds;
+                if (dots % 15 == 0) {
+                    int min = (int) (seconds / 60);
+                    int sec = (int) (seconds - min * 60);
+                    System.err.printf("%n%02d:%02d ", min, sec);
+                }
                 System.err.print(".");
+                dots++;
             }
 
             // move into fft input
@@ -227,6 +235,8 @@ public class Processor {
 
             notes.check(icnt, vel, on_event, 8, 0, peak_threshold);
         }
+
+        System.err.println();
 
         notes.regulate();
         notes.remove_shortnotes(1, 64);
