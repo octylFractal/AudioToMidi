@@ -34,7 +34,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.DoubleBuffer;
 import java.util.Arrays;
-import java.util.List;
+import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -124,11 +124,11 @@ public class Processor {
         }
 
         DoubleBuffer audioData = readAudioData(sf, sfinfo);
+        int size = audioData.remaining();
 
         ExecutorService pool = Executors.newWorkStealingPool();
-        List<TaskResult> buffers = new ParallelWindower(flag_window, audioData, len, hop)
+        Iterator<TaskResult> buffers = new ParallelWindower(flag_window, audioData, len, hop)
                 .process(pool);
-        pool.shutdown();
 
         // Samples per second (s/e)
         double sampsPerSecond = sfinfo.getSampleRate();
@@ -138,14 +138,15 @@ public class Processor {
         double secondsPerHop = sampsPerHop / sampsPerSecond;
         System.err.printf("%,f sec/loop%n", secondsPerHop);
 
-        System.err.println("Estimated audio length: " + formatSeconds(secondsPerHop * buffers.size()));
+        // size is in samples
+        System.err.println("Estimated audio length: " + formatSeconds(size / sampsPerSecond));
 
         Extern.pitch_shift = 0.0;
         Extern.n_pitch = 0;
         double seconds = 0;
         double prevSeconds = 0;
-        for (int icnt = 0; icnt < buffers.size(); icnt++) {
-            TaskResult res = buffers.get(icnt);
+        for (int icnt = 0; buffers.hasNext(); icnt++) {
+            TaskResult res = buffers.next();
             p = res.p();
             ph1 = res.ph1();
 
@@ -204,6 +205,7 @@ public class Processor {
 
             notes.check(icnt, vel, on_event, 8, 0, peak_threshold);
         }
+        pool.shutdown();
 
         System.err.println();
 
@@ -228,8 +230,9 @@ public class Processor {
                 if (!audioData.hasRemaining()) {
                     int startSize = audioData.capacity();
                     int expandSize = expandFactor(startSize);
-                    System.err.println("Re-alloc from " + startSize + " to " + expandSize);
+                    System.err.print("Re-alloc from " + startSize + " to " + expandSize + "...");
                     audioData = MemoryUtil.memRealloc(audioData, expandSize);
+                    System.err.println("done!");
                     checkState(audioData != null, "failed to realloc for audio: original %s, expanded %s",
                             startSize, expandSize);
                 }
@@ -247,6 +250,12 @@ public class Processor {
             }
         }
         audioData.flip();
+        int startSize = audioData.capacity();
+        int endSize = audioData.remaining();
+        audioData = MemoryUtil.memRealloc(audioData, endSize);
+        checkState(audioData != null, "failed to realloc for audio: original %s, expanded %s",
+                startSize, endSize);
+        System.err.println(audioData);
         return audioData;
     }
 
