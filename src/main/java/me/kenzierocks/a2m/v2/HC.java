@@ -32,11 +32,15 @@ public class HC {
         int i;
         double rl, im;
 
+        double[] array = WindowHelper.getWindowingArray(len);
+        freq.get(array);
+
         phs[0] = 0.0;
-        amp2[0] = freq.get(0) * freq.get(0) / scale;
+        double f0 = array[0];
+        amp2[0] = f0 * f0 / scale;
         for (i = 1; i < (len + 1) / 2; i++) {
-            rl = freq.get(i);
-            im = freq.get(len - i);
+            rl = array[i];
+            im = array[len - i];
             amp2[i] = (rl * rl + im * im) / scale;
             if (amp2[i] > 0.0) {
                 if (conj == 0)
@@ -49,7 +53,8 @@ public class HC {
         }
         if (len % 2 == 0) {
             phs[len / 2] = 0.0;
-            amp2[len / 2] = freq.get(len / 2) * freq.get(len / 2) / scale;
+            double fl2 = array[len / 2];
+            amp2[len / 2] = fl2 * fl2 / scale;
         }
     }
 

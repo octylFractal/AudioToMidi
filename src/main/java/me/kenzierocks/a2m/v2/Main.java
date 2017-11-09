@@ -70,7 +70,7 @@ public class Main {
             System.exit(1);
             return;
         }
-        
+
         if (opts.has(HELP)) {
             PARSER.printHelpOn(System.err);
             return;
@@ -79,15 +79,8 @@ public class Main {
         Path input = opts.valueOf(INPUT);
         try (InputStream stream = getStream(input);
                 OutputStream out = Files.newOutputStream(opts.valueOf(OUTPUT))) {
-            new Processor(stream, out, getSize(input)).process();
+            new Processor(stream, out).process();
         }
-    }
-
-    private static long getSize(Path path) throws IOException {
-        if (path == STDIN) {
-            return 0;
-        }
-        return Files.size(path);
     }
 
     private static InputStream getStream(Path path) throws IOException {

@@ -72,6 +72,21 @@ configurations.all {
      cacheChangingModulesFor 0, 'seconds'
    }
 }
+ext.lwjglVersion = '3.1.3'
+
+def addLWJGL(project, ext, natives) {
+    // "lwjgl" or "lwjgl-ext"
+    def lwjgl = "lwjgl" + (ext ? "-" + ext : "")
+    def ver = project.lwjglVersion
+    project.dependencies {
+        compile group: 'org.lwjgl', name: lwjgl, version: ver
+        if (natives) {
+            compile group: 'org.lwjgl', name: lwjgl, version: ver, classifier: 'natives-macos'
+            compile group: 'org.lwjgl', name: lwjgl, version: ver, classifier: 'natives-linux'
+            compile group: 'org.lwjgl', name: lwjgl, version: ver, classifier: 'natives-windows'
+        }
+    }
+}
 dependencies {
     compile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.25'
     compile group: 'ch.qos.logback', name: 'logback-classic', version: '1.2.3'
@@ -80,6 +95,9 @@ dependencies {
     compile group: 'net.sf.jopt-simple', name: 'jopt-simple', version: '5.0.3'
 
     compile group: 'com.techshroom', name: 'jsr305-plus', version: '0.0.1'
+    
+    addLWJGL(project, '', true);
+    addLWJGL(project, 'jemalloc', true);
 
     def guice = [group: 'com.google.inject', name: 'guice', version: '4.1.0']
     if (project.findProperty("debugging")) {

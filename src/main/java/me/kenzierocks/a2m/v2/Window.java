@@ -41,9 +41,13 @@ public interface Window {
     }
 
     default void windowing(int len, DoubleBuffer data, double scale, DoubleBuffer out) {
+        // apply window in java land to avoid expensive calls
+        double[] cache = WindowHelper.getWindowingArray(len);
+        data.get(cache);
         for (int i = 0; i < len; i++) {
-            out.put(data.get() * apply(i, len) / scale);
+            cache[i] = cache[i] * apply(i, len) / scale;
         }
+        out.put(cache);
     }
 
 }

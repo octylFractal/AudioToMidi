@@ -24,6 +24,8 @@
  */
 package me.kenzierocks.a2m.v2;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
@@ -32,28 +34,27 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.DoubleBuffer;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 
-import org.bytedeco.javacpp.fftw3;
-import org.bytedeco.javacpp.fftw3.fftw_plan;
-
-import com.google.common.base.Strings;
+import org.lwjgl.system.MemoryUtil;
 
 import me.kenzierocks.a2m.MidiFreqRelations;
+import me.kenzierocks.a2m.v2.ParallelWindower.TaskResult;
 
 public class Processor {
 
     private final InputStream stream;
     private final OutputStream out;
-    private final long estSize;
 
-    public Processor(InputStream stream, OutputStream out, long estSize) {
+    public Processor(InputStream stream, OutputStream out) {
         this.stream = stream;
         this.out = out;
-        this.estSize = estSize;
     }
 
     public void process() throws Exception {
@@ -84,11 +85,6 @@ public class Processor {
         int[] on_event = new int[128];
         Arrays.fill(on_event, -1);
 
-        DoubleBuffer in = DoubleBuffer.allocate(len);
-
-        DoubleBuffer x = fftw3.fftw_alloc_real(len).limit(len).asBuffer();
-        DoubleBuffer y = fftw3.fftw_alloc_real(len).limit(len).asBuffer();
-
         double[] p = new double[(len / 2) + 1];
         double[] p0 = new double[(len / 2) + 1];
         double[] dphi = new double[(len / 2) + 1];
@@ -115,7 +111,6 @@ public class Processor {
         }
 
         double t0 = ((double) len) / sfinfo.getSampleRate();
-        double den = flag_window.init_den(len);
 
         /* set range to analyse (search notes) */
         /* -- after 't0' is calculated */
@@ -128,7 +123,12 @@ public class Processor {
             i1 = len / 2 - 1;
         }
 
-        fftw_plan plan = fftw3.fftw_plan_r2r_1d(len, x, y, fftw3.FFTW_R2HC, (int) fftw3.FFTW_ESTIMATE);
+        DoubleBuffer audioData = readAudioData(sf, sfinfo);
+
+        ExecutorService pool = Executors.newWorkStealingPool();
+        List<TaskResult> buffers = new ParallelWindower(flag_window, audioData, len, hop)
+                .process(pool);
+        pool.shutdown();
 
         // Samples per second (s/e)
         double sampsPerSecond = sfinfo.getSampleRate();
@@ -138,50 +138,23 @@ public class Processor {
         double secondsPerHop = sampsPerHop / sampsPerSecond;
         System.err.printf("%,f sec/loop%n", secondsPerHop);
 
-        if (hop != len) {
-            sndfile_read(sf, sfinfo, position(in, hop), len - hop);
-        }
+        System.err.println("Estimated audio length: " + formatSeconds(secondsPerHop * buffers.size()));
 
         Extern.pitch_shift = 0.0;
         Extern.n_pitch = 0;
-        int dots = 0;
         double seconds = 0;
-        double prevSeconds = -1;
-        for (int icnt = 0;; icnt++) {
-            // prepare
-            in.position(0);
-            // shift
-            in.put(position(in, hop));
-            // read
-            try {
-                sndfile_read(sf, sfinfo, in, hop);
-            } catch (EOFException e) {
-                break;
-            }
-
-            in.flip();
+        double prevSeconds = 0;
+        for (int icnt = 0; icnt < buffers.size(); icnt++) {
+            TaskResult res = buffers.get(icnt);
+            p = res.p();
+            ph1 = res.ph1();
 
             seconds += secondsPerHop;
 
-            while ((seconds - prevSeconds) >= 1) {
-                prevSeconds += 1;
-                if (dots % 10 == 0) {
-                    int min = (int) (prevSeconds / 60);
-                    int sec = (int) (prevSeconds - min * 60);
-                    System.err.printf("%n%02d:%02d ", min, sec);
-                }
-                System.err.print((dots % 10));
-                dots++;
+            while ((seconds - prevSeconds) >= 10) {
+                prevSeconds += 10;
+                System.err.println(formatSeconds(prevSeconds));
             }
-
-            // windowify
-            x.clear();
-            flag_window.windowing(len, position(in, 0), 1.0, x);
-            x.flip();
-            
-            fftw_execute(plan);
-
-            HC.to_polar2(len, y, 0, den, p, ph1);
 
             // with phase-vocoder correction
             if (icnt == 0) {
@@ -241,45 +214,56 @@ public class Processor {
 
         long div = (long) (0.5 * (double) sfinfo.getSampleRate() / (double) hop);
         Midi.output_midi(notes, div, out);
-
-        fftw3.fftw_destroy_plan(plan);
     }
 
-    // split out for profiling purposes
-    private void fftw_execute(fftw_plan plan) {
-        fftw3.fftw_execute(plan);
-    }
+    private static final int DEFAULT_EXPECTED_SIZE = 6 * 1024 * 1024;
 
-    private DoubleBuffer position(DoubleBuffer buf, int pos) {
-        DoubleBuffer copy = buf.duplicate();
-        copy.position(pos);
-        return copy;
-    }
-
-    private short[] cachedBuf;
-
-    private void sndfile_read(InputStream sf, AudioFormat sfinfo, DoubleBuffer in, int len) throws IOException {
+    private DoubleBuffer readAudioData(InputStream sf, AudioFormat sfinfo) throws IOException {
+        System.err.println("Reading into data...");
+        DoubleBuffer audioData = MemoryUtil.memAllocDouble(
+                Math.max(sf.available() / Short.SIZE, DEFAULT_EXPECTED_SIZE));
         DataInputStream stream = new DataInputStream(sf);
-        if (cachedBuf == null || cachedBuf.length < len) {
-            cachedBuf = new short[len];
-        }
-        for (int i = 0; i < len; i++) {
-            if (sfinfo.getChannels() == 1) {
-                // just directly read
-                in.put(DOUBLE(stream.readShort()));
-            } else {
-                // average l/r
-                double l = DOUBLE(stream.readShort());
-                double r = DOUBLE(stream.readShort());
-                in.put((l + r) / 2);
+        while (true) {
+            try {
+                if (!audioData.hasRemaining()) {
+                    int startSize = audioData.capacity();
+                    int expandSize = expandFactor(startSize);
+                    System.err.println("Re-alloc from " + startSize + " to " + expandSize);
+                    audioData = MemoryUtil.memRealloc(audioData, expandSize);
+                    checkState(audioData != null, "failed to realloc for audio: original %s, expanded %s",
+                            startSize, expandSize);
+                }
+                if (sfinfo.getChannels() == 1) {
+                    // just directly read
+                    audioData.put(DOUBLE(stream.readShort()));
+                } else {
+                    // average l/r
+                    double l = DOUBLE(stream.readShort());
+                    double r = DOUBLE(stream.readShort());
+                    audioData.put((l + r) / 2);
+                }
+            } catch (EOFException end) {
+                break;
             }
         }
+        audioData.flip();
+        return audioData;
+    }
+
+    private static int expandFactor(int capacity) {
+        return (capacity * 5) / 3;
     }
 
     private static final double DTS_FACTOR = Math.pow(2, Short.SIZE - 1);
 
     private static double DOUBLE(short s) {
         return s / DTS_FACTOR;
+    }
+
+    private static String formatSeconds(double seconds) {
+        int min = (int) (seconds / 60);
+        int sec = (int) (seconds - min * 60);
+        return String.format("%02d:%02d", min, sec);
     }
 
 }
