@@ -147,8 +147,8 @@ public class Processor {
         double prevSeconds = 0;
         for (int icnt = 0; buffers.hasNext(); icnt++) {
             TaskResult res = buffers.next();
-            p = res.p();
-            ph1 = res.ph1();
+            p = res.p().array;
+            ph1 = res.ph1().array;
 
             seconds += secondsPerHop;
 

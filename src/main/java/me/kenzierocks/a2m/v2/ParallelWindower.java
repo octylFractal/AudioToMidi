@@ -60,18 +60,26 @@ public class ParallelWindower {
     @AutoValue
     public abstract static class TaskResult {
 
+        public static final class DArr {
+
+            public final double[] array;
+
+            public DArr(double[] array) {
+                this.array = array;
+            }
+
+        }
+
         public static TaskResult wrap(double[] p, double[] ph1) {
-            return new AutoValue_ParallelWindower_TaskResult(p, ph1);
+            return new AutoValue_ParallelWindower_TaskResult(new DArr(p), new DArr(ph1));
         }
 
         TaskResult() {
         }
 
-        @SuppressWarnings("mutable")
-        public abstract double[] p();
+        public abstract DArr p();
 
-        @SuppressWarnings("mutable")
-        public abstract double[] ph1();
+        public abstract DArr ph1();
 
     }
 
