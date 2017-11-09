@@ -260,7 +260,7 @@ public class Processor {
     }
 
     private static int expandFactor(int capacity) {
-        return (capacity * 5) / 3;
+        return capacity + (capacity >> 1);
     }
 
     private static final double DTS_FACTOR = Math.pow(2, Short.SIZE - 1);
