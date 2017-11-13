@@ -61,6 +61,9 @@ public class Notes {
     }
 
     public void append(int step, boolean event, byte note, byte vel) {
+        if (event) {
+            vel = adjustVolume(note, vel);
+        }
         notes.add(new Note(step, event, note, vel));
     }
 
@@ -105,6 +108,43 @@ public class Notes {
             }
             append(last_step + 1, false, (byte) i, (byte) 64);
         }
+    }
+
+    /**
+     * First array is indexed by note, and holds arrays indexed by velocity of
+     * the factor to scale the velocity by.
+     */
+    private static final byte[][] SCALING_FACTORS = generateFactors();
+
+    private static byte[][] generateFactors() {
+        byte[][] factors = new byte[128][0];
+        for (int i = 0; i < factors.length; i++) {
+            factors[i] = generateFactors((byte) i);
+        }
+        return factors;
+    }
+
+    private static byte[] generateFactors(byte note) {
+        // create a slope like f(x) = mx + b
+        // b is 1
+        // m is such that f(0) = 1, and f(127) = 0.25 - 1
+        // -- depending on note
+        // slope = (y2 - y1) / (x2 - x1)
+        // note = 0 -> 0.25; 1 - (1 - (0/127)) * 0.75
+        // note = 127 -> 1; 1 - (1 - (127/127)) * 0.75
+        double y2 = 1 - (1 - (note / (double) 127)) * 0.75;
+        double slope = (y2 - 1) / (127 - 0);
+        byte[] factor = new byte[128];
+        for (int i = 0; i < factor.length; i++) {
+            double scale = slope * i + 1;
+            factor[i] = (byte) Math.ceil(scale * i);
+        }
+        // System.err.println(note + " = " + Arrays.toString(factor));
+        return factor;
+    }
+
+    private byte adjustVolume(byte note, byte vel) {
+        return SCALING_FACTORS[note][vel];
     }
 
     private static void
