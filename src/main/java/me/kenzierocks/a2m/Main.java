@@ -43,7 +43,7 @@ public class Main {
 
     public static void main(String[] args) throws Exception {
         String file;
-        args = new String[]{"Wonderwall--PubrF0ghE4.mp3"};
+//        args = new String[]{"Wonderwall--PubrF0ghE4.mp3"};
         if (args.length > 0) {
             file = args[0];
         } else {

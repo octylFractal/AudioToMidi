@@ -27,12 +27,19 @@ package me.kenzierocks.a2m.v2;
 import static com.google.common.base.Preconditions.checkState;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.DoubleBuffer;
+import java.nio.file.Files;
+import java.nio.file.OpenOption;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
@@ -53,7 +60,7 @@ public class Processor {
     private final OutputStream out;
 
     public Processor(InputStream stream, OutputStream out) {
-        this.stream = stream;
+        this.stream = stream.markSupported() ? stream : new BufferedInputStream(stream);
         this.out = out;
     }
 
@@ -65,8 +72,8 @@ public class Processor {
         int len = 4096;
         Window flag_window = StandardWindows.HANNING;
         /* for 76 keys piano */
-        int notetop = 103; /* G8 */
-        int notelow = 28; /* E2 */
+        int notetop = 127;// 103; /* G8 */
+        int notelow = 0;// 28; /* E2 */
 
         Extern.abs_flg = true;
 
@@ -85,11 +92,12 @@ public class Processor {
         int[] on_event = new int[128];
         Arrays.fill(on_event, -1);
 
-        double[] p = new double[(len / 2) + 1];
-        double[] p0 = new double[(len / 2) + 1];
-        double[] dphi = new double[(len / 2) + 1];
-        double[] ph0 = new double[(len / 2) + 1];
-        double[] ph1 = new double[(len / 2) + 1];
+        int windowSize = (len / 2) + 1;
+        double[] p = new double[windowSize];
+        double[] p0 = new double[windowSize];
+        double[] dphi = new double[windowSize];
+        double[] ph0 = new double[windowSize];
+        double[] ph1 = new double[windowSize];
 
         AudioInputStream __temp = AudioSystem.getAudioInputStream(stream);
         AudioFormat __temp_format = __temp.getFormat();
@@ -145,6 +153,11 @@ public class Processor {
         Extern.n_pitch = 0;
         double seconds = 0;
         double prevSeconds = 0;
+        final double lend = len;
+        final double hopd = hop;
+        final double twopi = 2.0 * Math.PI;
+        final double freqCorrect = twopi * hopd;
+        double dSampRate = (double) sfinfo.getSampleRate();
         for (int icnt = 0; buffers.hasNext(); icnt++) {
             TaskResult res = buffers.next();
             p = res.p().array;
@@ -158,47 +171,35 @@ public class Processor {
             }
 
             // with phase-vocoder correction
+
+            double[] ph0Prev = ph0;
+            double[] p0Prev = p0;
+            ph0 = ph1;
+            p0 = p;
             if (icnt == 0) {
                 // first step, so no ph0[] yet
-                for (int i = 0; i < (len / 2 + 1); ++i) {
-                    // no correction
-                    dphi[i] = 0.0;
-
-                    // backup the phase for the next step
-                    p0[i] = p[i];
-                    ph0[i] = ph1[i];
-                }
             } else {
                 // freq correction by phase difference
-                for (int i = 0; i < (len / 2 + 1); ++i) {
-                    double twopi = 2.0 * Math.PI;
-                    // double dphi;
-                    dphi[i] = ph1[i] - ph0[i]
-                            - twopi * (double) i / (double) len * (double) hop;
-                    for (; dphi[i] >= Math.PI; dphi[i] -= twopi)
-                        ;
-                    for (; dphi[i] < -Math.PI; dphi[i] += twopi)
-                        ;
+                for (int i = 0; i < windowSize; ++i) {
+                    double dphiI = ph1[i] - ph0Prev[i]
+                            - twopi * (double) i / lend * hopd;
+                    dphiI = correctPhiMod(dphiI);
 
                     // frequency correction
                     // NOTE: freq is (i / len + dphi) * samplerate [Hz]
-                    dphi[i] = dphi[i] / twopi / (double) hop;
-
-                    // backup the phase for the next step
-                    p0[i] = p[i];
-                    ph0[i] = ph1[i];
+                    dphi[i] = dphiI / freqCorrect;
 
                     // then, average the power for the analysis
-                    p[i] = 0.5 * (Math.sqrt(p[i]) + Math.sqrt(p0[i]));
+                    p[i] = (FastTrig.sqrt(p[i]) + FastTrig.sqrt(p0Prev[i])) / 2;
                     p[i] = p[i] * p[i];
                 }
             }
 
             // with phase-vocoder correction
             // make corrected frequency (i / len + dphi) * samplerate [Hz]
-            for (int i = 0; i < (len / 2 + 1); ++i) {
-                dphi[i] = ((double) i / (double) len + dphi[i])
-                        * (double) sfinfo.getSampleRate();
+            for (int i = 0; i < windowSize; ++i) {
+                dphi[i] = ((double) i / lend + dphi[i])
+                        * dSampRate;
             }
             Analyze.note_intensity(p, dphi,
                     cut_ratio, rel_cut_ratio, i0, i1, t0, vel);
@@ -214,8 +215,23 @@ public class Processor {
         notes.remove_shortnotes(2, 28);
         notes.remove_octaves();
 
-        long div = (long) (0.5 * (double) sfinfo.getSampleRate() / (double) hop);
+        long div = (long) (0.5 * dSampRate / (double) hop);
         Midi.output_midi(notes, div, out);
+    }
+
+    private static final double TWO_PI = Math.PI * 2;
+
+    public static double correctPhiLoop(double dphi) {
+        for (; dphi >= Math.PI; dphi -= TWO_PI)
+            ;
+        for (; dphi < -Math.PI; dphi += TWO_PI)
+            ;
+        return dphi;
+    }
+
+    public static double correctPhiMod(double dphiI) {
+        double signedPi = Math.copySign(Math.PI, dphiI);
+        return (dphiI + signedPi) % TWO_PI - signedPi;
     }
 
     private static final int DEFAULT_EXPECTED_SIZE = 6 * 1024 * 1024;

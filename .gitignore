@@ -17,5 +17,7 @@ libs/
 .build/
 *.log*
 fftw*
+*.flac
+*.wav
 *.mp3
 *.mid*

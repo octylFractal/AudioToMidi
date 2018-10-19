@@ -43,6 +43,7 @@ import joptsimple.util.PathProperties;
 public class Main {
 
     private static final Path STDIN = Paths.get("-");
+    private static final Path OUTPUT_MID = Paths.get("[file-name].mid");
 
     private static final OptionParser PARSER = new OptionParser();
 
@@ -54,7 +55,7 @@ public class Main {
     private static final ArgumentAcceptingOptionSpec<Path> OUTPUT = PARSER.acceptsAll(Arrays.asList("o", "output"), "Output file")
             .withRequiredArg()
             .withValuesConvertedBy(new PathConverter())
-            .defaultsTo(Paths.get("output.mid"));
+            .defaultsTo(OUTPUT_MID);
 
     private static final OptionSpec<Void> HELP = PARSER.acceptsAll(Arrays.asList("h", "help"), "Print this help.")
             .forHelp();
@@ -77,8 +78,18 @@ public class Main {
         }
 
         Path input = opts.valueOf(INPUT);
+        Path output = opts.valueOf(OUTPUT);
+        if (output == OUTPUT_MID) {
+            String fileName = input.getFileName().toString();
+            int dotIndex = fileName.lastIndexOf('.');
+            String midName = dotIndex < 0
+                    ? fileName + ".mid"
+                    : fileName.substring(0, dotIndex) + ".mid";
+            output = input.resolveSibling(midName);
+        }
+        System.err.println("Converting from `" + input + "` to `" + output + "`...");
         try (InputStream stream = getStream(input);
-                OutputStream out = Files.newOutputStream(opts.valueOf(OUTPUT))) {
+                OutputStream out = Files.newOutputStream(output)) {
             new Processor(stream, out).process();
         }
     }
