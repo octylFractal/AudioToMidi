@@ -56,6 +56,9 @@ public class Main {
             .withValuesConvertedBy(new PathConverter())
             .defaultsTo(OUTPUT_MID);
 
+    private static final OptionSpec<Void> FFMPEG_READ = PARSER.acceptsAll(Arrays.asList("f", "ffmpeg"), "Use FFmpeg for reading.");
+    private static final OptionSpec<Void> NORMALIZE_VOLUME = PARSER.acceptsAll(Arrays.asList("n", "normalize"), "Turn on volume normalization");
+
     private static final OptionSpec<Void> HELP = PARSER.acceptsAll(Arrays.asList("h", "help"), "Print this help.")
             .forHelp();
 
@@ -79,7 +82,7 @@ public class Main {
         Path input = opts.valueOf(INPUT);
         Path output = getOutputFile(opts, input);
         System.err.println("Converting from `" + input + "` to `" + output + "`...");
-        try (InputStream stream = getStream(input)) {
+        try (InputStream stream = getStream(input, opts)) {
             new Processor(stream, () -> Files.newOutputStream(output)).process();
         }
     }
@@ -97,7 +100,17 @@ public class Main {
         return output;
     }
 
-    private static InputStream getStream(Path path) throws IOException {
+    private static InputStream getStream(Path path, OptionSet opts) throws IOException {
+        InputStream stream = getRawInput(path);
+        boolean normVol = opts.has(NORMALIZE_VOLUME);
+        boolean useFfmpeg = opts.has(FFMPEG_READ) || normVol;
+        if (!useFfmpeg) {
+            return stream;
+        }
+        return FfmpegReader.read(stream, normVol);
+    }
+
+    private static InputStream getRawInput(Path path) throws IOException {
         if (path == STDIN) {
             return System.in;
         }
