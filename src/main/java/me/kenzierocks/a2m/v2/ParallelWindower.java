@@ -28,16 +28,17 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.nio.DoubleBuffer;
 import java.util.Iterator;
-import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.bytedeco.javacpp.fftw3;
 import org.bytedeco.javacpp.fftw3.fftw_plan;
+import org.lwjgl.BufferUtils;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Throwables;
@@ -139,12 +140,12 @@ public class ParallelWindower {
     }
 
     private final Window window;
-    private final DoubleBuffer inputData;
+    private final DoubleSource inputData;
     private final int len;
     private final int hop;
     private final double den;
 
-    public ParallelWindower(Window window, DoubleBuffer inputData, int len, int hop) {
+    public ParallelWindower(Window window, DoubleSource inputData, int len, int hop) {
         this.window = window;
         this.inputData = inputData;
         this.len = len;
@@ -177,22 +178,22 @@ public class ParallelWindower {
 
     private Iterator<Future<TaskResult>> submitBuffers(ExecutorService exec) {
         // assumes good usage is 3x processor size
-        BlockingDeque<Future<TaskResult>> bufferQueue = new LinkedBlockingDeque<>(Runtime.getRuntime().availableProcessors() * 3);
+        BlockingQueue<Future<TaskResult>> bufferQueue = new LinkedBlockingQueue<>(1024);
         AtomicBoolean complete = new AtomicBoolean(false);
         submitSubmitterTask(exec, bufferQueue, complete);
         return new AbstractIterator<Future<TaskResult>>() {
 
-            private BlockingDeque<Future<TaskResult>> ref = bufferQueue;
+            private BlockingQueue<Future<TaskResult>> ref = bufferQueue;
 
             @Override
             protected Future<TaskResult> computeNext() {
-                if (complete.get()) {
+                if (ref.isEmpty() && complete.get()) {
                     // null out for GC
                     ref = null;
                     return endOfData();
                 }
                 try {
-                    return ref.takeFirst();
+                    return ref.take();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException(e);
@@ -202,24 +203,49 @@ public class ParallelWindower {
         };
     }
 
-    private void submitSubmitterTask(ExecutorService exec, BlockingDeque<Future<TaskResult>> bufferQueue, AtomicBoolean complete) {
+    private void submitSubmitterTask(ExecutorService exec, BlockingQueue<Future<TaskResult>> bufferQueue, AtomicBoolean complete) {
         Thread submitter = new Thread(() -> {
-            while (inputData.remaining() > len) {
-                int lim = inputData.limit();
-                // slice out [pos, pos + len]
-                inputData.limit(inputData.position() + len);
-                DoubleBuffer task = inputData.slice();
-                // reset limit
-                inputData.limit(lim);
-                // move up by hop
-                inputData.position(inputData.position() + hop);
+            // We read in a chunk at a time, storing it in a large buffer (16MB)
+            // We move the data back occasionally, which is fine because it's
+            // a small copy.
 
-                try {
-                    bufferQueue.putLast(exec.submit(new Task(window, task, den)));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException(e);
+            // This buffer has the following state:
+            // - Position: current index of slicer, will cut [pos, pos+len]
+            // - Limit: current max readable bytes, usually == capacity unless
+            // last loop
+            // - Capacity: max storage for bytes, as is typical
+            DoubleBuffer movingBuffer = BufferUtils.createDoubleBuffer(64 * len);
+
+            boolean moreData = true;
+            while (moreData) {
+                // First off, fill the buffer all the way
+                if (!inputData.fillBuffer(movingBuffer, movingBuffer.remaining())) {
+                    // we hit EOF, stop on next loop
+                    moreData = false;
                 }
+                // position is at 0, where it should be
+
+                // now, process until we need to squash it again
+                while (movingBuffer.remaining() > len) {
+                    // slice out [pos, pos + len]
+                    DoubleBuffer task = BufferUtils.createDoubleBuffer(len);
+                    DoubleBuffer mbCopySlice = movingBuffer.slice();
+                    mbCopySlice.limit(len);
+                    task.put(mbCopySlice);
+                    task.flip();
+                    // move back down for next window
+                    movingBuffer.position(movingBuffer.position() + hop);
+
+                    try {
+                        bufferQueue.put(exec.submit(new Task(window, task, den)));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                }
+                // then copy it down to the bottom and roll again
+                // NB: compact leaves it ready for the #fill above!
+                movingBuffer.compact();
             }
             complete.set(true);
         }, "submitter-thread");

@@ -24,32 +24,27 @@
  */
 package me.kenzierocks.a2m.v2;
 
-import static com.google.common.base.Preconditions.checkState;
-
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.DoubleBuffer;
-import java.nio.file.Files;
-import java.nio.file.OpenOption;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 
-import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.BufferUtils;
 
 import me.kenzierocks.a2m.MidiFreqRelations;
 import me.kenzierocks.a2m.v2.ParallelWindower.TaskResult;
@@ -109,8 +104,8 @@ public class Processor {
                 __temp_format.getChannels() * 2,
                 __temp_format.getSampleRate(),
                 true);
-        InputStream sf = AudioSystem.getAudioInputStream(sfinfo, __temp);
-        sf = new BufferedInputStream(sf);
+        AudioInputStream audioStreamReformatted = AudioSystem.getAudioInputStream(sfinfo, __temp);
+        InputStream sf = new BufferedInputStream(audioStreamReformatted);
 
         System.err.println(sfinfo);
 
@@ -131,8 +126,8 @@ public class Processor {
             i1 = len / 2 - 1;
         }
 
-        DoubleBuffer audioData = readAudioData(sf, sfinfo);
-        int size = audioData.remaining();
+        DoubleSource audioData = chunkStream(sf, sfinfo);
+        long size = __temp.getFrameLength();
 
         ExecutorService pool = Executors.newWorkStealingPool();
         Iterator<TaskResult> buffers = new ParallelWindower(flag_window, audioData, len, hop)
@@ -146,8 +141,12 @@ public class Processor {
         double secondsPerHop = sampsPerHop / sampsPerSecond;
         System.err.printf("%,f sec/loop%n", secondsPerHop);
 
-        // size is in samples
-        System.err.println("Estimated audio length: " + formatSeconds(size / sampsPerSecond));
+        // size is in frames or samples, same thing to us in mono.
+        if (size >= 0) {
+            System.err.println("Estimated audio length: " + formatSeconds(size / sampsPerSecond));
+        } else {
+            System.err.println("Unknown audio length.");
+        }
 
         Extern.pitch_shift = 0.0;
         Extern.n_pitch = 0;
@@ -234,54 +233,91 @@ public class Processor {
         return (dphiI + signedPi) % TWO_PI - signedPi;
     }
 
-    private static final int DEFAULT_EXPECTED_SIZE = 6 * 1024 * 1024;
-
-    private DoubleBuffer readAudioData(InputStream sf, AudioFormat sfinfo) throws IOException {
-        System.err.println("Reading into data...");
-        DoubleBuffer audioData = MemoryUtil.memAllocDouble(
-                Math.max(sf.available() / Short.SIZE, DEFAULT_EXPECTED_SIZE));
+    private DoubleSource chunkStream(InputStream sf, AudioFormat sfinfo) throws IOException {
         DataInputStream stream = new DataInputStream(sf);
-        while (true) {
-            try {
-                if (!audioData.hasRemaining()) {
-                    int startSize = audioData.capacity();
-                    int expandSize = expandFactor(startSize);
-                    System.err.print("Re-alloc from " + startSize + " to " + expandSize + "...");
-                    audioData = MemoryUtil.memRealloc(audioData, expandSize);
-                    System.err.println("done!");
-                    checkState(audioData != null, "failed to realloc for audio: original %s, expanded %s",
-                            startSize, expandSize);
+        AtomicBoolean complete = new AtomicBoolean(false);
+        BlockingQueue<DoubleBuffer> availableBuffers = new LinkedBlockingQueue<>(1024);
+        startIoThreads(sfinfo, stream, complete, availableBuffers);
+        return new DoubleSource() {
+
+            private DoubleBuffer currentBuffer;
+
+            @Override
+            public boolean fillBuffer(DoubleBuffer buffer, int amount) {
+                boolean moreData = true;
+                int added = 0;
+                while (added < amount) {
+                    if (currentBuffer == null) {
+                        if (availableBuffers.isEmpty() && complete.get()) {
+                            moreData = false;
+                            break;
+                        }
+                        try {
+                            currentBuffer = availableBuffers.take();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+
+                    int dstRemain = amount - added;
+                    if (currentBuffer.remaining() < dstRemain) {
+                        added += currentBuffer.remaining();
+                        buffer.put(currentBuffer);
+                        currentBuffer = null;
+                    } else {
+                        added += dstRemain;
+                        DoubleBuffer cp = currentBuffer.slice();
+                        cp.limit(dstRemain);
+                        buffer.put(cp);
+                        currentBuffer.position(currentBuffer.position() + dstRemain);
+                    }
                 }
-                if (sfinfo.getChannels() == 1) {
-                    // just directly read
-                    audioData.put(DOUBLE(stream.readShort()));
-                } else {
-                    // average l/r
-                    double l = DOUBLE(stream.readShort());
-                    double r = DOUBLE(stream.readShort());
-                    audioData.put((l + r) / 2);
-                }
-            } catch (EOFException end) {
-                break;
+
+                buffer.flip();
+                return moreData;
             }
-        }
-        audioData.flip();
-        int startSize = audioData.capacity();
-        int endSize = audioData.remaining();
-        audioData = MemoryUtil.memRealloc(audioData, endSize);
-        checkState(audioData != null, "failed to realloc for audio: original %s, expanded %s",
-                startSize, endSize);
-        System.err.println(audioData);
-        return audioData;
+
+        };
     }
 
-    private static int expandFactor(int capacity) {
-        return capacity + (capacity >> 1);
+    private void startIoThreads(AudioFormat sfinfo, DataInputStream stream, AtomicBoolean complete, BlockingQueue<DoubleBuffer> availableBuffers) {
+        Thread t = new Thread(() -> {
+            boolean moreData = true;
+            while (moreData) {
+                DoubleBuffer buffer = BufferUtils.createDoubleBuffer(64 * 1024);
+                while (buffer.hasRemaining()) {
+                    try {
+                        if (sfinfo.getChannels() == 1) {
+                            // just directly read
+                            buffer.put(DOUBLE(stream.readShort()));
+                        } else {
+                            // average l/r
+                            double l = DOUBLE(stream.readShort());
+                            double r = DOUBLE(stream.readShort());
+                            buffer.put((l + r) / 2);
+                        }
+                    } catch (EOFException end) {
+                        moreData = false;
+                        break;
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                }
+                buffer.flip();
+                try {
+                    availableBuffers.put(buffer);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            complete.set(true);
+        }, "I/O Thread");
+        t.start();
     }
 
     private static final double DTS_FACTOR = Math.pow(2, Short.SIZE - 1);
 
-    private static double DOUBLE(short s) {
+    static double DOUBLE(short s) {
         return s / DTS_FACTOR;
     }
 
