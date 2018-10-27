@@ -52,9 +52,9 @@ import me.kenzierocks.a2m.v2.ParallelWindower.TaskResult;
 public class Processor {
 
     private final InputStream stream;
-    private final OutputStream out;
+    private final OutStreamSupplier out;
 
-    public Processor(InputStream stream, OutputStream out) {
+    public Processor(InputStream stream, OutStreamSupplier out) {
         this.stream = stream.markSupported() ? stream : new BufferedInputStream(stream);
         this.out = out;
     }
@@ -215,7 +215,9 @@ public class Processor {
         notes.remove_octaves();
 
         long div = (long) (0.5 * dSampRate / (double) hop);
-        Midi.output_midi(notes, div, out);
+        try (OutputStream stream = out.get()) {
+            Midi.output_midi(notes, div, stream);
+        }
     }
 
     private static final double TWO_PI = Math.PI * 2;

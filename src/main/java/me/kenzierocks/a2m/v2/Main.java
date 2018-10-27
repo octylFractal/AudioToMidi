@@ -26,7 +26,6 @@ package me.kenzierocks.a2m.v2;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -72,12 +71,20 @@ public class Main {
             return;
         }
 
-        if (opts.has(HELP)) {
+        if (opts.has(HELP) || args.length == 0) {
             PARSER.printHelpOn(System.err);
             return;
         }
 
         Path input = opts.valueOf(INPUT);
+        Path output = getOutputFile(opts, input);
+        System.err.println("Converting from `" + input + "` to `" + output + "`...");
+        try (InputStream stream = getStream(input)) {
+            new Processor(stream, () -> Files.newOutputStream(output)).process();
+        }
+    }
+
+    private static Path getOutputFile(OptionSet opts, Path input) {
         Path output = opts.valueOf(OUTPUT);
         if (output == OUTPUT_MID) {
             String fileName = input.getFileName().toString();
@@ -87,11 +94,7 @@ public class Main {
                     : fileName.substring(0, dotIndex) + ".mid";
             output = input.resolveSibling(midName);
         }
-        System.err.println("Converting from `" + input + "` to `" + output + "`...");
-        try (InputStream stream = getStream(input);
-                OutputStream out = Files.newOutputStream(output)) {
-            new Processor(stream, out).process();
-        }
+        return output;
     }
 
     private static InputStream getStream(Path path) throws IOException {
