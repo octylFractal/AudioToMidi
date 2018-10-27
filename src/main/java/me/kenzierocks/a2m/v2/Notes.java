@@ -50,7 +50,7 @@ public class Notes {
 
     }
 
-    private final List<Note> notes = new ArrayList<>();
+    private List<Note> notes = new ArrayList<>();
 
     public int count() {
         return notes.size();
@@ -71,10 +71,6 @@ public class Notes {
         notes.add(index, new Note(step, event, note, vel));
     }
 
-    public void remove_at(int index) {
-        notes.remove(index);
-    }
-
     public void regulate() {
         int[] on_step = new int[128];
         int[] on_index = new int[128];
@@ -82,13 +78,14 @@ public class Notes {
         Arrays.fill(on_step, -1);
         Arrays.fill(on_index, -1);
 
+        BitSet removals = new BitSet();
+
         for (int i = 0; i < notes.size(); i++) {
             Note n = notes.get(i);
             byte note = n.note;
             if (!n.event) {
                 if (on_step[note] < 0 || on_index[note] < 0) {
-                    remove_at(i);
-                    i--;
+                    removals.set(i);
                 }
                 on_step[note] = -1;
                 on_index[note] = -1;
@@ -100,6 +97,7 @@ public class Notes {
                 on_index[note] = i;
             }
         }
+        correctNotes(removals);
 
         int last_step = notes.get(notes.size() - 1).step;
         for (int i = 0; i < 128; i++) {
@@ -108,6 +106,16 @@ public class Notes {
             }
             append(last_step + 1, false, (byte) i, (byte) 64);
         }
+    }
+
+    private void correctNotes(BitSet removals) {
+        List<Note> output = new ArrayList<>(notes.size() - removals.cardinality());
+        for (int i = 0; i < notes.size(); i++) {
+            if (!removals.get(i)) {
+                output.add(notes.get(i));
+            }
+        }
+        notes = output;
     }
 
     /**
@@ -147,21 +155,14 @@ public class Notes {
         return SCALING_FACTORS[note][vel];
     }
 
-    private static void
-            check_on_index_for_remove(int[] on_index, int i_rm) {
-        for (int i = 0; i < 128; i++) {
-            if (on_index[i] > i_rm) {
-                on_index[i]--;
-            }
-        }
-    }
-
     public void remove_shortnotes(int min_duration, int min_vel) {
         int[] on_step = new int[128];
         int[] on_index = new int[128];
 
         Arrays.fill(on_step, -1);
         Arrays.fill(on_index, -1);
+
+        BitSet removals = new BitSet();
 
         for (int index = 0; index < notes.size(); index++) {
             Note n = notes.get(index);
@@ -172,22 +173,16 @@ public class Notes {
                 if (on_step[note] < 0 || on_index[note] < 0) {
                     // no on event on the note
                     // so remove this orphant off event
-                    remove_at(index);
-                    index--;
+                    removals.set(index);
                 } else {
                     int vel = notes.get(on_index[note]).vel;
                     int duration = notes.get(index).step - on_step[note];
                     if (duration <= min_duration && vel <= min_vel) {
                         // remove these on and off events on the note
-                        remove_at(index);
-                        index--;
+                        removals.set(index);
 
                         int index_on = on_index[note];
-                        remove_at(index_on);
-                        index--;
-
-                        // need to shift indices on on_index[]
-                        check_on_index_for_remove(on_index, index_on);
+                        removals.set(index_on);
                     }
                 }
 
@@ -212,6 +207,8 @@ public class Notes {
                 on_index[note] = index;
             }
         }
+
+        correctNotes(removals);
     }
 
     public void remove_longnotes(int max_duration, int min_vel) {
@@ -221,6 +218,8 @@ public class Notes {
         Arrays.fill(on_step, -1);
         Arrays.fill(on_index, -1);
 
+        BitSet removals = new BitSet();
+
         for (int index = 0; index < notes.size(); index++) {
             Note n = notes.get(index);
             int note = n.note;
@@ -230,22 +229,16 @@ public class Notes {
                 if (on_step[note] < 0 || on_index[note] < 0) {
                     // no on event on the note
                     // so remove this orphant off event
-                    remove_at(index);
-                    index--;
+                    removals.set(index);
                 } else {
                     int vel = notes.get(on_index[note]).vel;
                     int duration = notes.get(index).step - on_step[note];
                     if (duration >= max_duration && vel <= min_vel) {
                         // remove these on and off events on the note
-                        remove_at(index);
-                        index--;
+                        removals.set(index);
 
                         int index_on = on_index[note];
-                        remove_at(index_on);
-                        index--;
-
-                        // need to shift indices on on_index[]
-                        check_on_index_for_remove(on_index, index_on);
+                        removals.set(index_on);
                     }
                 }
 
@@ -270,6 +263,7 @@ public class Notes {
                 on_index[note] = index;
             }
         }
+        correctNotes(removals);
     }
 
     public void remove_octaves() {
@@ -280,6 +274,8 @@ public class Notes {
         Arrays.fill(on_step, -1);
         Arrays.fill(on_index, -1);
 
+        BitSet removals = new BitSet();
+
         for (int index = 0; index < notes.size(); index++) {
             Note n = notes.get(index);
             int note = n.note;
@@ -289,20 +285,14 @@ public class Notes {
                 if (on_step[note] < 0 || on_index[note] < 0) {
                     // no on event on the note
                     // so remove this orphant off event
-                    remove_at(index);
-                    index--;
+                    removals.set(index);
                 } else {
                     if (flag_remove.get(index)) {
                         // remove these on and off events on the note
-                        remove_at(index);
-                        index--;
+                        removals.set(index);
 
                         int index_on = on_index[note];
-                        remove_at(index_on);
-                        index--;
-
-                        // need to shift indices on on_index[]
-                        check_on_index_for_remove(on_index, index_on);
+                        removals.set(index_on);
                     }
                 }
 
@@ -338,6 +328,7 @@ public class Notes {
                 }
             }
         }
+        correctNotes(removals);
     }
 
     public void check(int step, byte[] vel, int[] on_event, int on_threshold, int off_threshold, int peak_threshold) {

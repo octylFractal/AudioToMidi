@@ -44,9 +44,9 @@ public class HC {
             amp2[i] = (rl * rl + im * im) / scale;
             if (amp2[i] > 0.0) {
                 if (conj == 0)
-                    phs[i] = FastTrig.fast_atan2(+im, rl);
+                    phs[i] = Math.atan2(+im, rl);
                 else
-                    phs[i] = FastTrig.fast_atan2(-im, rl);
+                    phs[i] = Math.atan2(-im, rl);
             } else {
                 phs[i] = 0.0;
             }

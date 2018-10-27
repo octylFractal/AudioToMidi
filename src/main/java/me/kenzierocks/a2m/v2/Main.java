@@ -58,6 +58,7 @@ public class Main {
 
     private static final OptionSpec<Void> FFMPEG_READ = PARSER.acceptsAll(Arrays.asList("f", "ffmpeg"), "Use FFmpeg for reading.");
     private static final OptionSpec<Void> NORMALIZE_VOLUME = PARSER.acceptsAll(Arrays.asList("n", "normalize"), "Turn on volume normalization");
+    private static final OptionSpec<Void> PV_CORRECTION = PARSER.acceptsAll(Arrays.asList("pv-correction"), "Turn on phase-vocoder correction (from WaoN)");
 
     private static final OptionSpec<Void> HELP = PARSER.acceptsAll(Arrays.asList("h", "help"), "Print this help.")
             .forHelp();
@@ -83,7 +84,9 @@ public class Main {
         Path output = getOutputFile(opts, input);
         System.err.println("Converting from `" + input + "` to `" + output + "`...");
         try (InputStream stream = getStream(input, opts)) {
-            new Processor(stream, () -> Files.newOutputStream(output)).process();
+            new Processor(stream, 
+                    () -> Files.newOutputStream(output),
+                    opts.has(PV_CORRECTION)).process();
         }
     }
 

@@ -24,21 +24,47 @@
  */
 package me.kenzierocks.a2m.v2;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 public enum StandardWindows implements Window {
     HANNING {
 
         @Override
         public double apply(int i, int nn) {
-            return (0.5 * (1.0 - Math.cos(2.0 * Math.PI * (double) i / (double) (nn - 1))));
+            Double result = cache(i, nn);
+            if (result != null) {
+                return result;
+            }
+            return cache(i, nn, (0.5 * (1.0 - Math.cos(2.0 * Math.PI * (double) i / (double) (nn - 1)))));
         }
     },
     HAMMING {
 
         @Override
         public double apply(int i, int nn) {
-            return (0.54 - 0.46 * Math.cos(2.0 * Math.PI * (double) i / (double) (nn - 1)));
+            Double result = cache(i, nn);
+            if (result != null) {
+                return result;
+            }
+            return cache(i, nn, (0.54 - 0.46 * Math.cos(2.0 * Math.PI * (double) i / (double) (nn - 1))));
         }
 
     };
+
+    private final Map<Long, Double> cache = new ConcurrentHashMap<>();
+
+    protected Double cache(int i, int nn) {
+        return cache.get(key(i, nn));
+    }
+
+    protected double cache(int i, int nn, double result) {
+        cache.put(key(i, nn), result);
+        return result;
+    }
+
+    private long key(int i, int nn) {
+        return i | (((long) nn) << Integer.SIZE);
+    }
 
 }

@@ -53,10 +53,12 @@ public class Processor {
 
     private final InputStream stream;
     private final OutStreamSupplier out;
+    private final boolean pvCorrection;
 
-    public Processor(InputStream stream, OutStreamSupplier out) {
+    public Processor(InputStream stream, OutStreamSupplier out, boolean pvCorrection) {
         this.stream = stream.markSupported() ? stream : new BufferedInputStream(stream);
         this.out = out;
+        this.pvCorrection = pvCorrection;
     }
 
     public void process() throws Exception {
@@ -154,8 +156,7 @@ public class Processor {
         double prevSeconds = 0;
         final double lend = len;
         final double hopd = hop;
-        final double twopi = 2.0 * Math.PI;
-        final double freqCorrect = twopi * hopd;
+        final double freqCorrect = TWO_PI * hopd;
         double dSampRate = (double) sfinfo.getSampleRate();
         for (int icnt = 0; buffers.hasNext(); icnt++) {
             TaskResult res = buffers.next();
@@ -164,8 +165,8 @@ public class Processor {
 
             seconds += secondsPerHop;
 
-            while ((seconds - prevSeconds) >= 10) {
-                prevSeconds += 10;
+            while ((seconds - prevSeconds) >= 60) {
+                prevSeconds += 60;
                 System.err.println(formatSeconds(prevSeconds));
             }
 
@@ -175,35 +176,8 @@ public class Processor {
             double[] p0Prev = p0;
             ph0 = ph1;
             p0 = p;
-            if (icnt == 0) {
-                // first step, so no ph0[] yet
-            } else {
-                // freq correction by phase difference
-                for (int i = 0; i < windowSize; ++i) {
-                    double dphiI = ph1[i] - ph0Prev[i]
-                            - twopi * (double) i / lend * hopd;
-                    dphiI = correctPhiMod(dphiI);
-
-                    // frequency correction
-                    // NOTE: freq is (i / len + dphi) * samplerate [Hz]
-                    dphi[i] = dphiI / freqCorrect;
-
-                    // then, average the power for the analysis
-                    p[i] = (FastTrig.sqrt(p[i]) + FastTrig.sqrt(p0Prev[i])) / 2;
-                    p[i] = p[i] * p[i];
-                }
-            }
-
-            // with phase-vocoder correction
-            // make corrected frequency (i / len + dphi) * samplerate [Hz]
-            for (int i = 0; i < windowSize; ++i) {
-                dphi[i] = ((double) i / lend + dphi[i])
-                        * dSampRate;
-            }
-            Analyze.note_intensity(p, dphi,
-                    cut_ratio, rel_cut_ratio, i0, i1, t0, vel);
-
-            notes.check(icnt, vel, on_event, 8, 0, peak_threshold);
+            processSample(cut_ratio, rel_cut_ratio, peak_threshold, notes, vel, on_event, windowSize, p, dphi, ph1, t0, i0, i1, lend, hopd, freqCorrect,
+                    dSampRate, icnt, ph0Prev, p0Prev);
         }
         pool.shutdown();
 
@@ -220,6 +194,44 @@ public class Processor {
         }
     }
 
+    private void processSample(
+            double cut_ratio, double rel_cut_ratio, int peak_threshold, Notes notes,
+            byte[] vel, int[] on_event, int windowSize, double[] p, double[] dphi, double[] ph1,
+            double t0, int i0, int i1, final double lend, final double hopd,
+            final double freqCorrect, double dSampRate, int icnt, double[] ph0Prev, double[] p0Prev) {
+        if (pvCorrection) {
+            if (icnt == 0) {
+                // first step, so no ph0[] yet
+            } else {
+                // freq correction by phase difference
+                for (int i = 0; i < windowSize; ++i) {
+                    double dphiI = ph1[i] - ph0Prev[i]
+                            - TWO_PI * (double) i / lend * hopd;
+                    dphiI = correctPhiMod(dphiI);
+
+                    // frequency correction
+                    // NOTE: freq is (i / len + dphi) * samplerate [Hz]
+                    dphi[i] = dphiI / freqCorrect;
+
+                    // then, average the power for the analysis
+                    p[i] = (Math.sqrt(p[i]) + Math.sqrt(p0Prev[i])) / 2;
+                    p[i] = p[i] * p[i];
+                }
+            }
+
+            // with phase-vocoder correction
+            // make corrected frequency (i / len + dphi) * samplerate [Hz]
+            for (int i = 0; i < windowSize; ++i) {
+                dphi[i] = ((double) i / lend + dphi[i])
+                        * dSampRate;
+            }
+        }
+        Analyze.note_intensity(p, pvCorrection ? dphi : null,
+                cut_ratio, rel_cut_ratio, i0, i1, t0, vel);
+
+        notes.check(icnt, vel, on_event, 8, 0, peak_threshold);
+    }
+
     private static final double TWO_PI = Math.PI * 2;
 
     public static double correctPhiLoop(double dphi) {
@@ -231,6 +243,9 @@ public class Processor {
     }
 
     public static double correctPhiMod(double dphiI) {
+        if (dphiI < Math.PI && dphiI >= -Math.PI) {
+            return dphiI;
+        }
         double signedPi = Math.copySign(Math.PI, dphiI);
         return (dphiI + signedPi) % TWO_PI - signedPi;
     }
